@@ -2,8 +2,9 @@ import os
 import tkinter as tk
 from PIL import Image, ImageTk
 import pandas as pd
-from tkinter import Tk, Menu, Label, Toplevel, Entry,filedialog, Button, simpledialog
+from tkinter import Menu, Label, Toplevel, Entry, filedialog, Button, simpledialog
 import numpy as np
+import matplotlib.pyplot as plt
 from scipy.signal import savgol_filter,find_peaks
 
 
@@ -37,16 +38,15 @@ class MousePositionTracker(tk.Frame):
 
     def __init__(self, canvas,root):
         self.canvas = canvas
-        self.parent=root
+        self.parent = root
         self.canv_width = self.canvas.cget('width')
         self.canv_height = self.canvas.cget('height')
-        self.orginal_image=None
-        self.count=0
+        self.original_image = None
+        self.count = 0
+        self.n = 3
         self.reset()
 
-        column_names = ["ID","Sample Label","Index_gray","Height_gray","Index_red","Height_red"]
-
-        self.df = pd.DataFrame(columns=column_names)
+        self.df = pd.DataFrame()
 
         # Create canvas cross-hair lines.
         xhair_opts = dict(dash=(3, 2), fill='white', state=tk.HIDDEN)
@@ -101,30 +101,45 @@ class MousePositionTracker(tk.Frame):
         self.reset()
 
     def crop_ROI(self):
-        left, top=[2*i for i in self.start]
-        right, bottom=[2*i for i in self.end]
-        roi=self.orginal_image.crop((left,top,right,bottom))
-        roi_gray=roi.convert('L')
-        red, green, blue = roi.split()
-        nleft, nright,new_cropped_roi_gray=self.calculate_LR_border(roi_gray)
-        _,_, new_cropped_roi_red = self.calculate_LR_border(red)
+        left, top = [2*i for i in self.start]
+        right, bottom = [2*i for i in self.end]
+        roi = self.original_image.crop((left,top,right,bottom))
+        roi_gray = roi.convert('L')
+        nleft, nright = self.calculate_LR_border(roi_gray)
+        roi_tight_gray = roi_gray.crop((nleft, 0, nright,roi.size[1]))
+        roi_tight_color = roi.crop((nleft, 0, nright,roi.size[1]))
+        line_peaks = [self.find_lfa_peaks(cropped_roi) for cropped_roi in [roi_tight_gray]+list(roi_tight_color.split())]
+        color_channels = ['gray', 'red', 'green', 'blue']
 
-        save_path=os.path.join(self.save_folder,str(self.count)+'.png')
-        roi_tight=roi.crop((nleft,0,nright,roi.size[1]))
-        roi_tight.save(save_path)
+        save_path=self.img_name+'/'+self.img_name+'-'+str(self.count)+'-'+self.sample_label+'.png'
+        #roi_tight.save(save_path)
+
+        n_subplots = len(line_peaks)
+        fig, axes = plt.subplots(nrows=1, ncols=1+n_subplots, sharex=False, sharey=True)
+        fig.suptitle(self.img_name+'-'+str(self.count)+'-'+self.sample_label)
+        axes[0].imshow(roi_tight_color, aspect='auto')
+        axes[0].set_xticks([])
+        axes[0].set_ylabel('distance (pixels)')
+        for i in range(0,n_subplots):
+            axes[i+1].set_xlabel(f'{color_channels[i]} (signal)')
+            axes[i+1].plot(line_peaks[i][0], range(0,len(line_peaks[i][0])), color_channels[i])
+            axes[i+1].plot(line_peaks[i][2], line_peaks[i][1], 'o', color=color_channels[i])
+            axes[i+1].set_xlim([0,255])
+        fig.subplots_adjust(hspace=0, wspace=0)
+        # for ax in axes:
+        #      ax.set_aspect(2, share=True)
+        fig.savefig(save_path)
 
 
-        # new_left,new_right=self.calculate_LR_border(roi_gray)
-        peak_loc_gray, peak_height_gray=self.find_lfa_peaks(new_cropped_roi_gray)
-        peak_loc_red, peak_height_red=self.find_lfa_peaks(new_cropped_roi_red)
+        df = pd.DataFrame({'sample label': [self.sample_label]*self.n,
+                           'peak number': range(1,self.n+1)
+                          })
+        for i, line_peak in enumerate(line_peaks):
+            df[f'{color_channels[i]} index'] = line_peak[1]
+            df[f'{color_channels[i]} signal'] = line_peak[2]
 
-        self.df=pd.concat([self.df, pd.DataFrame({'ID': self.count,
-                                                  "Sample Label": self.sample_label,
-                                                  'Index_gray': peak_loc_gray,
-                                                  'Height_gray': peak_height_gray,
-                                                  'Index_red': peak_loc_red,
-                                                  'Height_red': peak_height_red
-                                                  })])
+        self.df=pd.concat([self.df, df])
+
 
     def calculate_LR_border(self, image):
         arr=np.asarray(image)
@@ -134,14 +149,14 @@ class MousePositionTracker(tk.Frame):
         left=np.argmin(gradient[:halfpoint])
         right=np.argmin(gradient[halfpoint:])+halfpoint
 
-        new_crop_image=image.crop((left,0,right,image.size[1]))
+        #new_crop_image=image.crop((left,0,right,image.size[1]))
         # new_crop_image.save('3.png')
 
-        return left, right, new_crop_image
+        return left, right
 
-    def find_lfa_peaks(self,new_cropped_image):
+    def find_lfa_peaks(self, cropped_image):
 
-        arr = np.asarray(new_cropped_image)
+        arr = np.asarray(cropped_image)
         mean_horizontal=255-np.mean(arr,axis=1)
         filtered=savgol_filter(mean_horizontal, 13, 2)
         peaks,_=find_peaks(filtered)
@@ -150,33 +165,30 @@ class MousePositionTracker(tk.Frame):
         peak_loc_sorted=peaks[peak_index_sorted]
         peak_height_sorted=peak_height[peak_index_sorted]
 
-        # top 3 peaks
-        peak_loc_top3=peak_loc_sorted[-3:]
-        peak_height_top3=peak_height_sorted[-3:]
+        # top self.n peaks
+        peak_loc_top3=peak_loc_sorted[-self.n:]
+        peak_height_top3=peak_height_sorted[-self.n:]
 
         # sort by peak location
         peak_index_by_location=np.argsort(peak_loc_top3)
         peak_sort_by_location=peak_loc_top3[peak_index_by_location]
         peak_height_sorted_by_location=peak_height_top3[peak_index_by_location]
 
-
-        return peak_sort_by_location,peak_height_sorted_by_location
+        return filtered, peak_sort_by_location, peak_height_sorted_by_location
 
     def save_coordinates(self):
-        save_path=os.path.join(self.save_folder,self.csv_filename)
-        self.df.to_csv(save_path)
+        save_path=os.path.join(self.img_name,self.csv_filename)
+        self.df.to_csv(save_path, index=False)
 
     def update_data(self, image, filename):
         self.count=0
-        self.orginal_image=image
-        splits =filename.split('/')
-        png_file=splits[-1]
-        self.csv_filename=png_file.replace(".png",".csv")
-        folder=filename.replace(".png","")
+        self.original_image=image
+        self.img_name=os.path.splitext(os.path.basename(filename))[0]
+        self.csv_filename=self.img_name+'.csv'
+        folder=self.img_name
         if not os.path.exists(folder):
             os.mkdir(folder)
-        self.save_folder=folder
-
+        #self.save_folder=folder
 
 class SelectionObject:
     """ Widget to display a rectangular area on given canvas defined by two points
@@ -254,7 +266,7 @@ class Application(tk.Frame):
         self.img = ImageTk.PhotoImage(bgimg)
         self.canvas = tk.Canvas(root, width=self.img.width(), height=self.img.height(),
                                 borderwidth=0, highlightthickness=0)
-        self.canvas.pack(expand=True)
+        self.canvas.pack(fill="both", expand=True)
 
         self.img_container=self.canvas.create_image(0, 0, image=self.img, anchor=tk.NW)
         self.canvas.img = self.img  # Keep reference.
@@ -279,22 +291,41 @@ class Application(tk.Frame):
         self.file_menu.add_command(
             label="Open...", command=self.open_file)
         self.menu_bar.add_cascade(label="File", menu=self.file_menu)
+        self.analysis_menu = Menu(self.menu_bar, tearoff=0)
+        self.analysis_menu.add_command(
+            label="Auto-analysis", command=self.auto_analysis)
+        self.menu_bar.add_cascade(label="Analysis", menu=self.analysis_menu)
         self.parent.config(menu=self.menu_bar)
 
     def open_file(self, event=None):
         input_file_name = filedialog.askopenfilename(defaultextension=".txt",
-                                                             filetypes=[("Image files", "*.png"), ("All Files", "*.*")])
+                                                             filetypes=[("Image files", "*.png"), ("Image files", "*.tif"), ("All Files", "*.*")])
         if input_file_name:
             global file_name
             file_name = input_file_name
-            root.title('{}'.format(os.path.basename(file_name)))
-            bgimg = Image.open(input_file_name)
+            root.title(f'{os.path.basename(file_name)}')
+            bgimg = Image.open(file_name)
             width, height = bgimg.size
             resized_bgimg = bgimg.resize((width // 2, height // 2), Image.ANTIALIAS)
 
             self.img = ImageTk.PhotoImage(resized_bgimg)
             self.canvas.itemconfig(self.img_container, image=self.img)
             self.posn_tracker.update_data(bgimg, file_name)
+
+    def auto_analysis(self, event=None):
+        if self.posn_tracker.original_image != None:
+            #print(f'image dims: {self.posn_tracker.original_image.size}')
+            y_start = 550/2
+            y_end = 850/2
+            x_start = 166/2
+            x_end = self.posn_tracker.original_image.size[0]
+            x_list = [int(i/2) for i in range(int(x_start*2), x_end, 173)]
+            for x1, x2 in zip(x_list[:-1], x_list[1:]):
+                self.posn_tracker.start = (x1, y_start)
+                self.posn_tracker.end = (x2, y_end)
+                rectangle = self.canvas.create_rectangle(x1, y_start, x2, y_end)
+                self.posn_tracker.quit(None)
+                self.canvas.delete(rectangle)
 
 if __name__ == '__main__':
 

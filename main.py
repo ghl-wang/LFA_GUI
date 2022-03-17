@@ -111,28 +111,34 @@ class MousePositionTracker(tk.Frame):
         line_peaks = [self.find_lfa_peaks(cropped_roi) for cropped_roi in [roi_tight_gray]+list(roi_tight_color.split())]
         color_channels = ['gray', 'red', 'green', 'blue']
 
-        save_path=self.img_name+'/'+self.img_name+'-'+str(self.count)+'-'+self.sample_label+'.png'
+        file_title = self.file_label+'-'+str(self.count)+'-'+self.sample_label
+        save_path = os.path.normpath(os.path.join(self.dir_name, self.file_label, file_title+'.png'))
         #roi_tight.save(save_path)
 
         n_subplots = len(line_peaks)
         fig, axes = plt.subplots(nrows=1, ncols=1+n_subplots, sharex=False, sharey=True)
-        fig.suptitle(self.img_name+'-'+str(self.count)+'-'+self.sample_label)
+        
+        fig.suptitle(file_title)
         axes[0].imshow(roi_tight_color, aspect='auto')
         axes[0].set_xticks([])
         axes[0].set_ylabel('distance (pixels)')
         for i in range(0,n_subplots):
             axes[i+1].set_xlabel(f'{color_channels[i]} (signal)')
             axes[i+1].plot(line_peaks[i][0], range(0,len(line_peaks[i][0])), color_channels[i])
-            axes[i+1].plot(line_peaks[i][2], line_peaks[i][1], 'o', color=color_channels[i])
-            axes[i+1].set_xlim([0,255])
+            axes[i+1].plot(line_peaks[i][2][:-1], line_peaks[i][1][:-1], 'o', color=color_channels[i])
+            axes[i+1].set_xlim([-25,255])
+            axes[i+1].grid(True, which='major', color='lightgray')
+            axes[i+1].set_xticks([0,100,200])
         fig.subplots_adjust(hspace=0, wspace=0)
         # for ax in axes:
         #      ax.set_aspect(2, share=True)
         fig.savefig(save_path)
 
-
-        df = pd.DataFrame({'sample label': [self.sample_label]*self.n,
-                           'peak number': range(1,self.n+1)
+        # n+1 to accommodate background intensity value appended to top 3 peaks
+        peak_labels = [f'peak {i}' for i in range(1,self.n+2)]
+        peak_labels[3] = 'background'
+        df = pd.DataFrame({'sample label': [self.sample_label]*(self.n+1),
+                           'feature': peak_labels
                           })
         for i, line_peak in enumerate(line_peaks):
             df[f'{color_channels[i]} index'] = line_peak[1]
@@ -159,35 +165,42 @@ class MousePositionTracker(tk.Frame):
         arr = np.asarray(cropped_image)
         mean_horizontal=255-np.mean(arr,axis=1)
         filtered=savgol_filter(mean_horizontal, 13, 2)
+        # switch to returning peaks > 3*sd above background (= 50 lowest values)?
+        lowest = np.sort(filtered)[0:49]
+        background = np.mean(lowest) #+ 3*np.std(lowest)
         peaks,_=find_peaks(filtered)
+        # peaks,_=find_peaks(filtered, threshold=3*np.std(lowest))
         peak_height=filtered[peaks]
         peak_index_sorted=np.argsort(peak_height)
         peak_loc_sorted=peaks[peak_index_sorted]
         peak_height_sorted=peak_height[peak_index_sorted]
 
-        # top self.n peaks
+        # # top self.n peaks
         peak_loc_top3=peak_loc_sorted[-self.n:]
         peak_height_top3=peak_height_sorted[-self.n:]
 
-        # sort by peak location
+        # # sort by peak location
         peak_index_by_location=np.argsort(peak_loc_top3)
-        peak_sort_by_location=peak_loc_top3[peak_index_by_location]
-        peak_height_sorted_by_location=peak_height_top3[peak_index_by_location]
+        peak_sort_by_location=np.append(peak_loc_top3[peak_index_by_location], 0)
+        peak_height_sorted_by_location=np.append(peak_height_top3[peak_index_by_location], background)
+        # peak_index_by_location=np.argsort(peak_loc_sorted)
+        # peak_sort_by_location=peak_loc_sorted[peak_index_by_location]
+        # peak_height_sorted_by_location=peak_loc_sorted[peak_index_by_location]
 
         return filtered, peak_sort_by_location, peak_height_sorted_by_location
 
     def save_coordinates(self):
-        save_path=os.path.join(self.img_name,self.csv_filename)
-        self.df.to_csv(save_path, index=False)
+        self.df.to_csv(self.csv_save_path, index=False)
 
     def update_data(self, image, filename):
-        self.count=0
-        self.original_image=image
-        self.img_name=os.path.splitext(os.path.basename(filename))[0]
-        self.csv_filename=self.img_name+'.csv'
-        folder=self.img_name
+        self.count = 0
+        self.original_image = image
+        (self.dir_name, self.file_name) = os.path.split(filename)
+        (self.file_label, self.file_ext) = os.path.splitext(self.file_name)
+        folder = os.path.normpath(os.path.join(self.dir_name, self.file_label))
         if not os.path.exists(folder):
             os.mkdir(folder)
+        self.csv_save_path = os.path.normpath(os.path.join(self.dir_name, self.file_label, self.file_label+'.csv'))
         #self.save_folder=folder
 
 class SelectionObject:
@@ -304,20 +317,20 @@ class Application(tk.Frame):
             global file_name
             file_name = input_file_name
             root.title(f'{os.path.basename(file_name)}')
-            bgimg = Image.open(file_name)
-            width, height = bgimg.size
-            resized_bgimg = bgimg.resize((width // 2, height // 2), Image.ANTIALIAS)
+            img = Image.open(file_name)
+            width, height = img.size
+            resized_bgimg = img.resize((width // 2, height // 2), Image.ANTIALIAS)
 
             self.img = ImageTk.PhotoImage(resized_bgimg)
             self.canvas.itemconfig(self.img_container, image=self.img)
-            self.posn_tracker.update_data(bgimg, file_name)
+            self.posn_tracker.update_data(img, file_name)
 
     def auto_analysis(self, event=None):
         if self.posn_tracker.original_image != None:
             #print(f'image dims: {self.posn_tracker.original_image.size}')
-            y_start = 550/2
-            y_end = 850/2
-            x_start = 166/2
+            y_start = 550//2
+            y_end = 850//2
+            x_start = 166//2
             x_end = self.posn_tracker.original_image.size[0]
             x_list = [int(i/2) for i in range(int(x_start*2), x_end, 173)]
             for x1, x2 in zip(x_list[:-1], x_list[1:]):

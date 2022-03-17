@@ -32,7 +32,6 @@ class popupWindow(object):
         popupWindow.value_global=self.value
         self.top.destroy()
 
-
 class MousePositionTracker(tk.Frame):
     """ Tkinter Canvas mouse position widget. """
 
@@ -101,8 +100,8 @@ class MousePositionTracker(tk.Frame):
         self.reset()
 
     def crop_ROI(self):
-        left, top = [2*i for i in self.start]
-        right, bottom = [2*i for i in self.end]
+        left, top = [self.canvas.aspect*i for i in self.start]
+        right, bottom = [self.canvas.aspect*i for i in self.end]
         roi = self.original_image.crop((left,top,right,bottom))
         roi_gray = roi.convert('L')
         nleft, nright = self.calculate_LR_border(roi_gray)
@@ -151,7 +150,7 @@ class MousePositionTracker(tk.Frame):
         arr=np.asarray(image)
         mean_vertical=np.mean(arr,axis=0)
         gradient=np.gradient(mean_vertical)
-        halfpoint=gradient.size//2
+        halfpoint=int(gradient.size//2)
         left=np.argmin(gradient[:halfpoint])
         right=np.argmin(gradient[halfpoint:])+halfpoint
 
@@ -275,6 +274,7 @@ class Application(tk.Frame):
         path = "front.png"
         # modify code to make image adjusted to window size
         bgimg = Image.open(path)
+        self.aspect = 1
 
         self.img = ImageTk.PhotoImage(bgimg)
         self.canvas = tk.Canvas(root, width=self.img.width(), height=self.img.height(),
@@ -318,21 +318,23 @@ class Application(tk.Frame):
             file_name = input_file_name
             root.title(f'{os.path.basename(file_name)}')
             img = Image.open(file_name)
-            width, height = img.size
-            resized_bgimg = img.resize((width // 2, height // 2), Image.ANTIALIAS)
+            img_w, img_h = img.size
+            canvas_w = self.canvas.winfo_width()
+            self.canvas.aspect = img_w / canvas_w
+            resized_img = img.resize((int(img_w / self.canvas.aspect), int(img_h / self.canvas.aspect)), Image.ANTIALIAS)
 
-            self.img = ImageTk.PhotoImage(resized_bgimg)
+            self.img = ImageTk.PhotoImage(resized_img)
             self.canvas.itemconfig(self.img_container, image=self.img)
             self.posn_tracker.update_data(img, file_name)
 
     def auto_analysis(self, event=None):
         if self.posn_tracker.original_image != None:
             #print(f'image dims: {self.posn_tracker.original_image.size}')
-            y_start = 550//2
-            y_end = 850//2
-            x_start = 166//2
+            y_start = int(550/self.aspect)
+            y_end = int(850/self.aspect)
+            x_start = int(166/self.aspect)
             x_end = self.posn_tracker.original_image.size[0]
-            x_list = [int(i/2) for i in range(int(x_start*2), x_end, 173)]
+            x_list = [int(pos/self.aspect) for pos in range(int(x_start*self.aspect), x_end, 173)]
             for x1, x2 in zip(x_list[:-1], x_list[1:]):
                 self.posn_tracker.start = (x1, y_start)
                 self.posn_tracker.end = (x2, y_end)
@@ -342,7 +344,7 @@ class Application(tk.Frame):
 
 if __name__ == '__main__':
 
-    WIDTH, HEIGHT = 1225, 690
+    WIDTH, HEIGHT = 1568, 882
     BACKGROUND = 'grey'
     TITLE = 'Image Cropper'
 

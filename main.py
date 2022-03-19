@@ -92,7 +92,7 @@ class MousePositionTracker(tk.Frame):
     def quit(self, event):
         self.count+=1
         self.sample_label = simpledialog.askstring("Input", "Sample label",
-                                        parent=self.parent)
+                                        parent=self.parent, initialvalue=self.count)
         if self.sample_label:
             self.crop_ROI()
             self.save_coordinates()
@@ -108,20 +108,24 @@ class MousePositionTracker(tk.Frame):
         roi_tight_gray = roi_gray.crop((nleft, 0, nright,roi.size[1]))
         roi_tight_color = roi.crop((nleft, 0, nright,roi.size[1]))
         line_peaks = [self.find_lfa_peaks(cropped_roi) for cropped_roi in [roi_tight_gray]+list(roi_tight_color.split())]
-        color_channels = ['gray', 'red', 'green', 'blue']
-
+        
         file_title = self.file_label+'-'+str(self.count)+'-'+self.sample_label
         save_path = os.path.normpath(os.path.join(self.dir_name, self.file_label, file_title+'.png'))
         #roi_tight.save(save_path)
 
-        n_subplots = len(line_peaks)
-        fig, axes = plt.subplots(nrows=1, ncols=1+n_subplots, sharex=False, sharey=True)
+        n_channels = len(line_peaks)
+        n_peaks = len(line_peaks[0][1])-1
+        color_channels = ['gray', 'red', 'green', 'blue']
+        features = [f'peak {i}' for i in range(n_peaks)] + ['background']
+        data_types = ['index', 'signal']
+        
+        fig, axes = plt.subplots(nrows=1, ncols=1+n_channels, sharex=False, sharey=True)
         
         fig.suptitle(file_title)
         axes[0].imshow(roi_tight_color, aspect='auto')
         axes[0].set_xticks([])
         axes[0].set_ylabel('distance (pixels)')
-        for i in range(0,n_subplots):
+        for i in range(0, n_channels):
             axes[i+1].set_xlabel(f'{color_channels[i]} (signal)')
             axes[i+1].plot(line_peaks[i][0], range(0,len(line_peaks[i][0])), color_channels[i])
             axes[i+1].plot(line_peaks[i][2][:-1], line_peaks[i][1][:-1], 'o', color=color_channels[i])
@@ -134,17 +138,19 @@ class MousePositionTracker(tk.Frame):
         fig.savefig(save_path)
 
         # n+1 to accommodate background intensity value appended to top 3 peaks
-        peak_labels = [f'peak {i}' for i in range(1,self.n+2)]
-        peak_labels[3] = 'background'
-        df = pd.DataFrame({'sample label': [self.sample_label]*(self.n+1),
-                           'feature': peak_labels
-                          })
-        for i, line_peak in enumerate(line_peaks):
-            df[f'{color_channels[i]} index'] = line_peak[1]
-            df[f'{color_channels[i]} signal'] = line_peak[2]
+        # peak_labels = [f'peak {i}' for i in range(1,self.n+2)]
+        # peak_labels[3] = 'background'
+        # df = pd.DataFrame({'sample label': [self.sample_label]*(self.n+1),
+        #                    'feature': peak_labels
+        #                   })
+        # for i, line_peak in enumerate(line_peaks):
+        #     df[f'{color_channels[i]} index'] = line_peak[1]
+        #     df[f'{color_channels[i]} signal'] = line_peak[2]
 
-        self.df=pd.concat([self.df, df])
-
+        # self.df=pd.concat([self.df, df])
+        data=[[' '.join([c,f,t]), line_peaks[i][k+1][j]] for i,c in enumerate(color_channels) for j,f in enumerate(features) for k,t in enumerate(data_types) if f+t!='backgroundindex']
+        df = pd.DataFrame([self.count]+[row[1] for row in data], index=['selection']+[row[0] for row in data], columns=[self.sample_label])
+        self.df=pd.concat([self.df, df], axis=1)
 
     def calculate_LR_border(self, image):
         arr=np.asarray(image)
@@ -189,7 +195,7 @@ class MousePositionTracker(tk.Frame):
         return filtered, peak_sort_by_location, peak_height_sorted_by_location
 
     def save_coordinates(self):
-        self.df.to_csv(self.csv_save_path, index=False)
+        self.df.to_csv(self.csv_save_path, index=True)
 
     def update_data(self, image, filename):
         self.count = 0
@@ -271,11 +277,9 @@ class Application(tk.Frame):
         self.parent=parent
         self.create_file_menu()
 
-        path = "front.png"
+        path = "./front.png"
         # modify code to make image adjusted to window size
         bgimg = Image.open(path)
-        self.aspect = 1
-
         self.img = ImageTk.PhotoImage(bgimg)
         self.canvas = tk.Canvas(root, width=self.img.width(), height=self.img.height(),
                                 borderwidth=0, highlightthickness=0)
@@ -283,6 +287,7 @@ class Application(tk.Frame):
 
         self.img_container=self.canvas.create_image(0, 0, image=self.img, anchor=tk.NW)
         self.canvas.img = self.img  # Keep reference.
+        self.canvas.aspect = 1
 
         # Create selection object to show current selection boundaries.
         self.selection_obj = SelectionObject(self.canvas, self.SELECT_OPTS)
@@ -329,12 +334,14 @@ class Application(tk.Frame):
 
     def auto_analysis(self, event=None):
         if self.posn_tracker.original_image != None:
-            #print(f'image dims: {self.posn_tracker.original_image.size}')
-            y_start = int(550/self.aspect)
-            y_end = int(850/self.aspect)
-            x_start = int(166/self.aspect)
-            x_end = self.posn_tracker.original_image.size[0]
-            x_list = [int(pos/self.aspect) for pos in range(int(x_start*self.aspect), x_end, 173)]
+            y_start = int(270/self.canvas.aspect)
+            y_end = int(410/self.canvas.aspect)
+            x_start = int(86/self.canvas.aspect)
+            x_end = int(self.posn_tracker.original_image.size[0]/self.canvas.aspect)
+            spacing = int(87/self.canvas.aspect)
+            x_list = [pos for pos in range(x_start, x_end, spacing)]
+            if x_list[-1] != x_end:
+                x_list = x_list+[x_end]
             for x1, x2 in zip(x_list[:-1], x_list[1:]):
                 self.posn_tracker.start = (x1, y_start)
                 self.posn_tracker.end = (x2, y_end)
@@ -344,7 +351,7 @@ class Application(tk.Frame):
 
 if __name__ == '__main__':
 
-    WIDTH, HEIGHT = 1568, 882
+    WIDTH, HEIGHT = 1500,750 #1568, 882
     BACKGROUND = 'grey'
     TITLE = 'Image Cropper'
 

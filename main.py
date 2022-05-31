@@ -136,6 +136,7 @@ class MousePositionTracker(tk.Frame):
         # for ax in axes:
         #      ax.set_aspect(2, share=True)
         fig.savefig(save_path)
+        plt.close(fig)
 
         # n+1 to accommodate background intensity value appended to top 3 peaks
         # peak_labels = [f'peak {i}' for i in range(1,self.n+2)]
@@ -171,7 +172,8 @@ class MousePositionTracker(tk.Frame):
         mean_horizontal=255-np.mean(arr,axis=1)
         filtered=savgol_filter(mean_horizontal, 13, 2)
         # switch to returning peaks > 3*sd above background (= 50 lowest values)?
-        lowest = np.sort(filtered)[0:49]
+        lowest_length = np.clip(len(filtered)//2, 1, 50)-1
+        lowest = np.sort(filtered)[0:lowest_length]
         background = np.mean(lowest) #+ 3*np.std(lowest)
         peaks,_=find_peaks(filtered)
         # peaks,_=find_peaks(filtered, threshold=3*np.std(lowest))
@@ -183,6 +185,11 @@ class MousePositionTracker(tk.Frame):
         # # top self.n peaks
         peak_loc_top3=peak_loc_sorted[-self.n:]
         peak_height_top3=peak_height_sorted[-self.n:]
+
+        while len(peak_loc_top3) < 3:
+            peak_loc_top3 = np.append(peak_loc_top3, 0)
+        while len(peak_height_top3) < 3:
+            peak_height_top3 = np.append(peak_height_top3, 0)
 
         # # sort by peak location
         peak_index_by_location=np.argsort(peak_loc_top3)
@@ -334,8 +341,8 @@ class Application(tk.Frame):
 
     def auto_analysis(self, event=None):
         if self.posn_tracker.original_image != None:
-            y_start = int(270/self.canvas.aspect)
-            y_end = int(410/self.canvas.aspect)
+            y_start = int(290/self.canvas.aspect)
+            y_end = int(430/self.canvas.aspect)
             x_start = int(86/self.canvas.aspect)
             x_end = int(self.posn_tracker.original_image.size[0]/self.canvas.aspect)
             spacing = int(87/self.canvas.aspect)

@@ -2,8 +2,9 @@ import os
 import tkinter as tk
 from PIL import Image, ImageTk
 import pandas as pd
-from tkinter import Tk, Menu, Label, Toplevel, Entry,filedialog, Button, simpledialog
+from tkinter import Menu, Label, Toplevel, Entry, filedialog, Button, simpledialog
 import numpy as np
+import matplotlib.pyplot as plt
 from scipy.signal import savgol_filter,find_peaks
 
 
@@ -31,22 +32,20 @@ class popupWindow(object):
         popupWindow.value_global=self.value
         self.top.destroy()
 
-
 class MousePositionTracker(tk.Frame):
     """ Tkinter Canvas mouse position widget. """
 
     def __init__(self, canvas,root):
         self.canvas = canvas
-        self.parent=root
+        self.parent = root
         self.canv_width = self.canvas.cget('width')
         self.canv_height = self.canvas.cget('height')
-        self.orginal_image=None
-        self.count=0
+        self.original_image = None
+        self.count = 0
+        self.n = 3
         self.reset()
 
-        column_names = ["ID","Sample Label","Index_gray","Height_gray","Index_red","Height_red"]
-
-        self.df = pd.DataFrame(columns=column_names)
+        self.df = pd.DataFrame()
 
         # Create canvas cross-hair lines.
         xhair_opts = dict(dash=(3, 2), fill='white', state=tk.HIDDEN)
@@ -93,7 +92,7 @@ class MousePositionTracker(tk.Frame):
     def quit(self, event):
         self.count+=1
         self.sample_label = simpledialog.askstring("Input", "Sample label",
-                                        parent=self.parent)
+                                        parent=self.parent, initialvalue=self.count)
         if self.sample_label:
             self.crop_ROI()
             self.save_coordinates()
@@ -101,82 +100,120 @@ class MousePositionTracker(tk.Frame):
         self.reset()
 
     def crop_ROI(self):
-        left, top=[2*i for i in self.start]
-        right, bottom=[2*i for i in self.end]
-        roi=self.orginal_image.crop((left,top,right,bottom))
-        roi_gray=roi.convert('L')
-        red, green, blue = roi.split()
-        nleft, nright,new_cropped_roi_gray=self.calculate_LR_border(roi_gray)
-        _,_, new_cropped_roi_red = self.calculate_LR_border(red)
+        left, top = [self.canvas.aspect*i for i in self.start]
+        right, bottom = [self.canvas.aspect*i for i in self.end]
+        roi = self.original_image.crop((left,top,right,bottom))
+        roi_gray = roi.convert('L')
+        nleft, nright = self.calculate_LR_border(roi_gray)
+        roi_tight_gray = roi_gray.crop((nleft, 0, nright,roi.size[1]))
+        roi_tight_color = roi.crop((nleft, 0, nright,roi.size[1]))
+        line_peaks = [self.find_lfa_peaks(cropped_roi) for cropped_roi in [roi_tight_gray]+list(roi_tight_color.split())]
+        
+        file_title = self.file_label+'-'+str(self.count)+'-'+self.sample_label
+        save_path = os.path.normpath(os.path.join(self.dir_name, self.file_label, file_title+'.png'))
+        #roi_tight.save(save_path)
 
-        save_path=os.path.join(self.save_folder,str(self.count)+'.png')
-        roi_tight=roi.crop((nleft,0,nright,roi.size[1]))
-        roi_tight.save(save_path)
+        n_channels = len(line_peaks)
+        n_peaks = len(line_peaks[0][1])-1
+        color_channels = ['gray', 'red', 'green', 'blue']
+        features = [f'peak {i}' for i in range(n_peaks)] + ['background']
+        data_types = ['index', 'signal']
+        
+        fig, axes = plt.subplots(nrows=1, ncols=1+n_channels, sharex=False, sharey=True)
+        
+        fig.suptitle(file_title)
+        axes[0].imshow(roi_tight_color, aspect='auto')
+        axes[0].set_xticks([])
+        axes[0].set_ylabel('distance (pixels)')
+        for i in range(0, n_channels):
+            axes[i+1].set_xlabel(f'{color_channels[i]} (signal)')
+            axes[i+1].plot(line_peaks[i][0], range(0,len(line_peaks[i][0])), color_channels[i])
+            axes[i+1].plot(line_peaks[i][2][:-1], line_peaks[i][1][:-1], 'o', color=color_channels[i])
+            axes[i+1].set_xlim([-25,255])
+            axes[i+1].grid(True, which='major', color='lightgray')
+            axes[i+1].set_xticks([0,100,200])
+        fig.subplots_adjust(hspace=0, wspace=0)
+        # for ax in axes:
+        #      ax.set_aspect(2, share=True)
+        fig.savefig(save_path)
+        plt.close(fig)
 
+        # n+1 to accommodate background intensity value appended to top 3 peaks
+        # peak_labels = [f'peak {i}' for i in range(1,self.n+2)]
+        # peak_labels[3] = 'background'
+        # df = pd.DataFrame({'sample label': [self.sample_label]*(self.n+1),
+        #                    'feature': peak_labels
+        #                   })
+        # for i, line_peak in enumerate(line_peaks):
+        #     df[f'{color_channels[i]} index'] = line_peak[1]
+        #     df[f'{color_channels[i]} signal'] = line_peak[2]
 
-        # new_left,new_right=self.calculate_LR_border(roi_gray)
-        peak_loc_gray, peak_height_gray=self.find_lfa_peaks(new_cropped_roi_gray)
-        peak_loc_red, peak_height_red=self.find_lfa_peaks(new_cropped_roi_red)
-
-        self.df=pd.concat([self.df, pd.DataFrame({'ID': self.count,
-                                                  "Sample Label": self.sample_label,
-                                                  'Index_gray': peak_loc_gray,
-                                                  'Height_gray': peak_height_gray,
-                                                  'Index_red': peak_loc_red,
-                                                  'Height_red': peak_height_red
-                                                  })])
+        # self.df=pd.concat([self.df, df])
+        data=[[' '.join([c,f,t]), line_peaks[i][k+1][j]] for i,c in enumerate(color_channels) for j,f in enumerate(features) for k,t in enumerate(data_types) if f+t!='backgroundindex']
+        df = pd.DataFrame([self.count]+[row[1] for row in data], index=['selection']+[row[0] for row in data], columns=[self.sample_label])
+        self.df=pd.concat([self.df, df], axis=1)
 
     def calculate_LR_border(self, image):
         arr=np.asarray(image)
         mean_vertical=np.mean(arr,axis=0)
         gradient=np.gradient(mean_vertical)
-        halfpoint=gradient.size//2
+        halfpoint=int(gradient.size//2)
         left=np.argmin(gradient[:halfpoint])
         right=np.argmin(gradient[halfpoint:])+halfpoint
 
-        new_crop_image=image.crop((left,0,right,image.size[1]))
+        #new_crop_image=image.crop((left,0,right,image.size[1]))
         # new_crop_image.save('3.png')
 
-        return left, right, new_crop_image
+        return left, right
 
-    def find_lfa_peaks(self,new_cropped_image):
+    def find_lfa_peaks(self, cropped_image):
 
-        arr = np.asarray(new_cropped_image)
+        arr = np.asarray(cropped_image)
         mean_horizontal=255-np.mean(arr,axis=1)
         filtered=savgol_filter(mean_horizontal, 13, 2)
+        # switch to returning peaks > 3*sd above background (= 50 lowest values)?
+        lowest_length = np.clip(len(filtered)//2, 1, 50)-1
+        lowest = np.sort(filtered)[0:lowest_length]
+        background = np.mean(lowest) #+ 3*np.std(lowest)
         peaks,_=find_peaks(filtered)
+        # peaks,_=find_peaks(filtered, threshold=3*np.std(lowest))
         peak_height=filtered[peaks]
         peak_index_sorted=np.argsort(peak_height)
         peak_loc_sorted=peaks[peak_index_sorted]
         peak_height_sorted=peak_height[peak_index_sorted]
 
-        # top 3 peaks
-        peak_loc_top3=peak_loc_sorted[-3:]
-        peak_height_top3=peak_height_sorted[-3:]
+        # # top self.n peaks
+        peak_loc_top3=peak_loc_sorted[-self.n:]
+        peak_height_top3=peak_height_sorted[-self.n:]
 
-        # sort by peak location
+        while len(peak_loc_top3) < 3:
+            peak_loc_top3 = np.append(peak_loc_top3, 0)
+        while len(peak_height_top3) < 3:
+            peak_height_top3 = np.append(peak_height_top3, 0)
+
+        # # sort by peak location
         peak_index_by_location=np.argsort(peak_loc_top3)
-        peak_sort_by_location=peak_loc_top3[peak_index_by_location]
-        peak_height_sorted_by_location=peak_height_top3[peak_index_by_location]
+        peak_sort_by_location=np.append(peak_loc_top3[peak_index_by_location], 0)
+        peak_height_sorted_by_location=np.append(peak_height_top3[peak_index_by_location], background)
+        # peak_index_by_location=np.argsort(peak_loc_sorted)
+        # peak_sort_by_location=peak_loc_sorted[peak_index_by_location]
+        # peak_height_sorted_by_location=peak_loc_sorted[peak_index_by_location]
 
-
-        return peak_sort_by_location,peak_height_sorted_by_location
+        return filtered, peak_sort_by_location, peak_height_sorted_by_location
 
     def save_coordinates(self):
-        save_path=os.path.join(self.save_folder,self.csv_filename)
-        self.df.to_csv(save_path)
+        self.df.to_csv(self.csv_save_path, index=True)
 
     def update_data(self, image, filename):
-        self.count=0
-        self.orginal_image=image
-        splits =filename.split('/')
-        png_file=splits[-1]
-        self.csv_filename=png_file.replace(".png",".csv")
-        folder=filename.replace(".png","")
+        self.count = 0
+        self.original_image = image
+        (self.dir_name, self.file_name) = os.path.split(filename)
+        (self.file_label, self.file_ext) = os.path.splitext(self.file_name)
+        folder = os.path.normpath(os.path.join(self.dir_name, self.file_label))
         if not os.path.exists(folder):
             os.mkdir(folder)
-        self.save_folder=folder
-
+        self.csv_save_path = os.path.normpath(os.path.join(self.dir_name, self.file_label, self.file_label+'.csv'))
+        #self.save_folder=folder
 
 class SelectionObject:
     """ Widget to display a rectangular area on given canvas defined by two points
@@ -247,17 +284,17 @@ class Application(tk.Frame):
         self.parent=parent
         self.create_file_menu()
 
-        path = "front.png"
+        path = "./front.png"
         # modify code to make image adjusted to window size
         bgimg = Image.open(path)
-
         self.img = ImageTk.PhotoImage(bgimg)
         self.canvas = tk.Canvas(root, width=self.img.width(), height=self.img.height(),
                                 borderwidth=0, highlightthickness=0)
-        self.canvas.pack(expand=True)
+        self.canvas.pack(fill="both", expand=True)
 
         self.img_container=self.canvas.create_image(0, 0, image=self.img, anchor=tk.NW)
         self.canvas.img = self.img  # Keep reference.
+        self.canvas.aspect = 1
 
         # Create selection object to show current selection boundaries.
         self.selection_obj = SelectionObject(self.canvas, self.SELECT_OPTS)
@@ -279,26 +316,49 @@ class Application(tk.Frame):
         self.file_menu.add_command(
             label="Open...", command=self.open_file)
         self.menu_bar.add_cascade(label="File", menu=self.file_menu)
+        self.analysis_menu = Menu(self.menu_bar, tearoff=0)
+        self.analysis_menu.add_command(
+            label="Auto-analysis", command=self.auto_analysis)
+        self.menu_bar.add_cascade(label="Analysis", menu=self.analysis_menu)
         self.parent.config(menu=self.menu_bar)
 
     def open_file(self, event=None):
         input_file_name = filedialog.askopenfilename(defaultextension=".txt",
-                                                             filetypes=[("Image files", "*.png"), ("All Files", "*.*")])
+                                                             filetypes=[("Image files", "*.png"), ("Image files", "*.tif"), ("All Files", "*.*")])
         if input_file_name:
             global file_name
             file_name = input_file_name
-            root.title('{}'.format(os.path.basename(file_name)))
-            bgimg = Image.open(input_file_name)
-            width, height = bgimg.size
-            resized_bgimg = bgimg.resize((width // 2, height // 2), Image.ANTIALIAS)
+            root.title(f'{os.path.basename(file_name)}')
+            img = Image.open(file_name)
+            img_w, img_h = img.size
+            canvas_w = self.canvas.winfo_width()
+            self.canvas.aspect = img_w / canvas_w
+            resized_img = img.resize((int(img_w / self.canvas.aspect), int(img_h / self.canvas.aspect)), Image.ANTIALIAS)
 
-            self.img = ImageTk.PhotoImage(resized_bgimg)
+            self.img = ImageTk.PhotoImage(resized_img)
             self.canvas.itemconfig(self.img_container, image=self.img)
-            self.posn_tracker.update_data(bgimg, file_name)
+            self.posn_tracker.update_data(img, file_name)
+
+    def auto_analysis(self, event=None):
+        if self.posn_tracker.original_image != None:
+            y_start = int(290/self.canvas.aspect)
+            y_end = int(430/self.canvas.aspect)
+            x_start = int(86/self.canvas.aspect)
+            x_end = int(self.posn_tracker.original_image.size[0]/self.canvas.aspect)
+            spacing = int(87/self.canvas.aspect)
+            x_list = [pos for pos in range(x_start, x_end, spacing)]
+            if x_list[-1] != x_end:
+                x_list = x_list+[x_end]
+            for x1, x2 in zip(x_list[:-1], x_list[1:]):
+                self.posn_tracker.start = (x1, y_start)
+                self.posn_tracker.end = (x2, y_end)
+                rectangle = self.canvas.create_rectangle(x1, y_start, x2, y_end)
+                self.posn_tracker.quit(None)
+                self.canvas.delete(rectangle)
 
 if __name__ == '__main__':
 
-    WIDTH, HEIGHT = 1225, 690
+    WIDTH, HEIGHT = 1500,750 #1568, 882
     BACKGROUND = 'grey'
     TITLE = 'Image Cropper'
 

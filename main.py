@@ -35,7 +35,7 @@ class popupWindow(object):
 class MousePositionTracker(tk.Frame):
     """ Tkinter Canvas mouse position widget. """
 
-    def __init__(self, canvas,root):
+    def __init__(self, canvas,root, peak_spacing):
         self.canvas = canvas
         self.parent = root
         self.canv_width = self.canvas.cget('width')
@@ -43,6 +43,7 @@ class MousePositionTracker(tk.Frame):
         self.original_image = None
         self.count = 0
         self.n = 3
+        self.peak_spacing=peak_spacing
         self.reset()
 
         self.df = pd.DataFrame()
@@ -175,7 +176,7 @@ class MousePositionTracker(tk.Frame):
         lowest_length = np.clip(len(filtered)//2, 1, 50)-1
         lowest = np.sort(filtered)[0:lowest_length]
         background = np.mean(lowest) #+ 3*np.std(lowest)
-        peaks,_=find_peaks(filtered)
+        peaks,_=find_peaks(filtered,distance=self.peak_spacing)
         # peaks,_=find_peaks(filtered, threshold=3*np.std(lowest))
         peak_height=filtered[peaks]
         peak_index_sorted=np.argsort(peak_height)
@@ -272,6 +273,18 @@ class SelectionObject:
         for rect in self.rects:
             self.canvas.itemconfigure(rect, state=tk.HIDDEN)
 
+class popupWindow(object):
+    def __init__(self,master):
+        top=self.top=Toplevel(master)
+        self.l=Label(top,text="Please input peak spacing value")
+        self.l.pack()
+        self.e=Entry(top)
+        self.e.pack(pady=10, padx=20)
+        self.b=Button(top,text='Ok',command=self.cleanup)
+        self.b.pack()
+    def cleanup(self):
+        self.value=int(self.e.get())
+        self.top.destroy()
 
 class Application(tk.Frame):
 
@@ -282,7 +295,7 @@ class Application(tk.Frame):
     def __init__(self, parent, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
         self.parent=parent
-        self.create_file_menu()
+        self.create_menu()
 
         path = "./front.png"
         # modify code to make image adjusted to window size
@@ -298,23 +311,30 @@ class Application(tk.Frame):
 
         # Create selection object to show current selection boundaries.
         self.selection_obj = SelectionObject(self.canvas, self.SELECT_OPTS)
-
+        self.peak_spacing=80
         # Callback function to update it given two points of its diagonal.
-        def on_drag(start, end, **kwarg):  # Must accept these arguments.
-            self.selection_obj.update(start, end)
+
 
         # Create mouse position tracker that uses the function.
-        self.posn_tracker = MousePositionTracker(self.canvas,parent)
-        self.posn_tracker.autodraw(command=on_drag)  # Enable callbacks.
+        self.posn_tracker = MousePositionTracker(self.canvas,parent,self.peak_spacing)
+        self.posn_tracker.autodraw(command=self.on_drag)  # Enable callbacks.
         # self.button=Button(root, text='Save')
         #
         # self.button.pack(expand=True)
         #
-    def create_file_menu(self):
+    def on_drag(self, start, end, **kwarg):  # Must accept these arguments.
+        self.selection_obj.update(start, end)
+
+    def create_menu(self):
         self.menu_bar = Menu(self.parent)
         self.file_menu = Menu(self.menu_bar, tearoff=0)
         self.file_menu.add_command(
             label="Open...", command=self.open_file)
+
+        # add options to adjust peak spacings
+        self.file_menu.add_command(
+            label="Settings", command=self.adjust_settings)
+
         self.menu_bar.add_cascade(label="File", menu=self.file_menu)
         self.analysis_menu = Menu(self.menu_bar, tearoff=0)
         self.analysis_menu.add_command(
@@ -327,17 +347,26 @@ class Application(tk.Frame):
                                                              filetypes=[("Image files", "*.png"), ("Image files", "*.tif"), ("All Files", "*.*")])
         if input_file_name:
             global file_name
-            file_name = input_file_name
-            root.title(f'{os.path.basename(file_name)}')
-            img = Image.open(file_name)
+            self.file_name = input_file_name
+            root.title(f'{os.path.basename(self.file_name)}')
+            img = Image.open(self.file_name)
             img_w, img_h = img.size
             canvas_w = self.canvas.winfo_width()
             self.canvas.aspect = img_w / canvas_w
             resized_img = img.resize((int(img_w / self.canvas.aspect), int(img_h / self.canvas.aspect)), Image.ANTIALIAS)
-
+            self.original_img = img
             self.img = ImageTk.PhotoImage(resized_img)
             self.canvas.itemconfig(self.img_container, image=self.img)
             self.posn_tracker.update_data(img, file_name)
+    def adjust_settings(self):
+        self.settings_window=popupWindow(self.parent)
+        self.parent.wait_window(self.settings_window.top)
+        self.peak_spacing=self.settings_window.value
+        print(self.peak_spacing)
+        # Create mouse position tracker that uses the function.
+        self.posn_tracker = MousePositionTracker(self.canvas,self.parent, self.peak_spacing)
+        self.posn_tracker.autodraw(command=self.on_drag)  # Enable callbacks.
+        self.posn_tracker.update_data(self.original_img, self.file_name)
 
     def auto_analysis(self, event=None):
         if self.posn_tracker.original_image != None:

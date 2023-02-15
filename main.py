@@ -95,8 +95,12 @@ class MousePositionTracker(tk.Frame):
         self.sample_label = simpledialog.askstring("Input", "Sample label",
                                         parent=self.parent, initialvalue=self.count)
         if self.sample_label:
-            self.crop_ROI()
-            self.save_coordinates()
+            try:
+                self.crop_ROI()
+                self.save_coordinates()
+            except Exception:
+                messagebox.showerror("Error", "Something is wrong. Please check if a valid image is loaded and/or a valid LFA region is selected")
+                return
         self.hide()  # Hide cross-hairs.
         self.reset()
 

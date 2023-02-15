@@ -2,7 +2,7 @@ import os
 import tkinter as tk
 from PIL import Image, ImageTk
 import pandas as pd
-from tkinter import Menu, Label, Toplevel, Entry, filedialog, Button, simpledialog
+from tkinter import Menu, Label, Toplevel, Entry, filedialog, Button, simpledialog, messagebox
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import savgol_filter,find_peaks
@@ -95,15 +95,25 @@ class MousePositionTracker(tk.Frame):
         self.sample_label = simpledialog.askstring("Input", "Sample label",
                                         parent=self.parent, initialvalue=self.count)
         if self.sample_label:
-            self.crop_ROI()
-            self.save_coordinates()
+            try:
+                self.crop_ROI()
+                self.save_coordinates()
+            except Exception:
+                messagebox.showerror("Error", "Something is wrong. Please check if a valid image is loaded and/or a valid LFA region is selected")
+                return
         self.hide()  # Hide cross-hairs.
         self.reset()
 
     def crop_ROI(self):
         left, top = [self.canvas.aspect*i for i in self.start]
+
         right, bottom = [self.canvas.aspect*i for i in self.end]
+        # try:
+        # except AttributeError:
+        #     messagebox.showerror("Error","Can't find image. Please open a valid image.")
+        #     return
         roi = self.original_image.crop((left,top,right,bottom))
+
         roi_gray = roi.convert('L')
         nleft, nright = self.calculate_LR_border(roi_gray)
         roi_tight_gray = roi_gray.crop((nleft, 0, nright,roi.size[1]))

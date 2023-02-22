@@ -6,7 +6,7 @@ from tkinter import Menu, Label, Toplevel, Entry, filedialog, Button, simpledial
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import savgol_filter,find_peaks
-
+PEAK_SPACING=50
 
 class popupWindow(object):
 
@@ -35,7 +35,7 @@ class popupWindow(object):
 class MousePositionTracker(tk.Frame):
     """ Tkinter Canvas mouse position widget. """
 
-    def __init__(self, canvas,root, peak_spacing):
+    def __init__(self, canvas,root, peak_spacing=PEAK_SPACING):
         self.canvas = canvas
         self.parent = root
         self.canv_width = self.canvas.cget('width')
@@ -214,6 +214,8 @@ class MousePositionTracker(tk.Frame):
 
     def save_coordinates(self):
         self.df.to_csv(self.csv_save_path, index=True)
+    def update_peak_threshold(self, peak_gap):
+        self.peak_spacing=peak_gap
 
     def update_data(self, image, filename):
         self.count = 0
@@ -293,7 +295,11 @@ class popupWindow(object):
         self.b=Button(top,text='Ok',command=self.cleanup)
         self.b.pack()
     def cleanup(self):
-        self.value=int(self.e.get())
+        txt=self.e.get()
+        if txt.isnumeric():
+            self.value=int(txt)
+        else:
+            self.value=PEAK_SPACING
         self.top.destroy()
 
 class Application(tk.Frame):
@@ -321,7 +327,9 @@ class Application(tk.Frame):
 
         # Create selection object to show current selection boundaries.
         self.selection_obj = SelectionObject(self.canvas, self.SELECT_OPTS)
-        self.peak_spacing=80
+        self.peak_spacing=PEAK_SPACING
+        self.original_img=None
+        self.file_name=None
         # Callback function to update it given two points of its diagonal.
 
 
@@ -376,9 +384,7 @@ class Application(tk.Frame):
         self.peak_spacing=self.settings_window.value
         print(self.peak_spacing)
         # Create mouse position tracker that uses the function.
-        self.posn_tracker = MousePositionTracker(self.canvas,self.parent, self.peak_spacing)
-        self.posn_tracker.autodraw(command=self.on_drag)  # Enable callbacks.
-        self.posn_tracker.update_data(self.original_img, self.file_name)
+        self.posn_tracker.update_peak_threshold(self.peak_spacing)
 
     def auto_analysis(self, event=None):
         if self.posn_tracker.original_image != None:

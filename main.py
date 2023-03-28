@@ -16,7 +16,7 @@ class popupWindow(object):
         self.top.columnconfigure(0, weight=1)
         self.top.columnconfigure(1,weight=3)
         self.value=""
-        
+
         self.l=Label(self.top,text="Sample Label")
         self.l.grid(column=0,row=0,sticky=tk.W, padx=5, pady=5)
 
@@ -294,12 +294,11 @@ class popupWindow(object):
         self.e.pack(pady=10, padx=20)
         self.b=Button(top,text='Ok',command=self.cleanup)
         self.b.pack()
+        self.value = PEAK_SPACING
     def cleanup(self):
         txt=self.e.get()
         if txt.isnumeric():
             self.value=int(txt)
-        else:
-            self.value=PEAK_SPACING
         self.top.destroy()
 
 class Application(tk.Frame):
@@ -317,7 +316,7 @@ class Application(tk.Frame):
         # modify code to make image adjusted to window size
         bgimg = Image.open(path)
         self.img = ImageTk.PhotoImage(bgimg)
-        self.canvas = tk.Canvas(root, width=self.img.width(), height=self.img.height(),
+        self.canvas = tk.Canvas(parent, width=self.img.width(), height=self.img.height(),
                                 borderwidth=0, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
 
@@ -367,7 +366,7 @@ class Application(tk.Frame):
         if input_file_name:
             global file_name
             self.file_name = input_file_name
-            root.title(f'{os.path.basename(self.file_name)}')
+            self.parent.title(f'{os.path.basename(self.file_name)}')
             img = Image.open(self.file_name)
             img_w, img_h = img.size
             canvas_w = self.canvas.winfo_width()
@@ -379,6 +378,7 @@ class Application(tk.Frame):
             self.posn_tracker.update_data(self.original_img, self.file_name)
 
     def adjust_settings(self):
+        print(test)
         self.settings_window=popupWindow(self.parent)
         self.parent.wait_window(self.settings_window.top)
         self.peak_spacing=self.settings_window.value
@@ -408,7 +408,7 @@ if __name__ == '__main__':
     WIDTH, HEIGHT = 1500,750 #1568, 882
     BACKGROUND = 'grey'
     TITLE = 'Image Cropper'
-
+    test="in the main"
 
     root = tk.Tk()
     root.title(TITLE)
